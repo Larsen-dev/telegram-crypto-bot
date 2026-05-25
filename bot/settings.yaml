@@ -1,0 +1,7 @@
+logger_settings:
+  name: "telegram_crypto_bot"
+
+bot_settings:
+  interval: 300
+  default_startup_message: "Crypto bot is active!\nUse /subscribe <coin-name> <cost> <'above' | 'below'>."
+  default_error_message: "Invalid format!\nUse /subscribe <coin-name> <cost> <\"above\" | \"below\">."
