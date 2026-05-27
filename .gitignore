@@ -1,0 +1,11 @@
+.env
+coins.json
+venv/
+__pycache__/
+*.pyc
+*.log
+*.db
+*.db-shm
+*.db-wal
+.vscode/
+.idea/

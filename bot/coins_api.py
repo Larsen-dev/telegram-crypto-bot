@@ -1,11 +1,22 @@
+import yaml
 import httpx
 
 from logger_handler import get_logger
 
+# Default variables
 COIN_API_URL = "https://api.coinpaprika.com/v1"
+SYMBOL_TO_ID, NAME_TO_ID = {}, {}
 
-logger = get_logger()
+# Settings
+with open(r"bot/settings.yaml", "r") as file:
+    LOGGER_SETTINGS = yaml.safe_load(file)["logger_settings"]
 
+LOGGER_NAME = LOGGER_SETTINGS["name"]
+
+# Logger initialisation
+logger = get_logger(LOGGER_NAME)
+
+# Resolves whether passed input is a valid coin and returnes its id
 def resolve_coin_id(user_input: str):
     formatted = user_input.strip().lower()
 
@@ -20,6 +31,7 @@ def resolve_coin_id(user_input: str):
     
     return None
 
+# Gets list of all coins
 async def get_coins():
     async with httpx.AsyncClient() as client:
         try:
@@ -37,13 +49,11 @@ async def get_coins():
             logger.exception(
                 f"CoinPaprika API request failed: {e}"
             )
-    
+
     return coins_list
 
-async def set_coins():
-    global SYMBOL_TO_ID, NAME_TO_ID
-    coins_list = get_coins()
-
+# Sets default global variables as SYMBOL_TO_ID and NAME_TO_ID needed for resolving
+async def set_coins(coins_list: dict):
     for coin in coins_list:
         coin_id = coin["id"]
         symbol = coin["symbol"].lower()
@@ -56,9 +66,8 @@ async def set_coins():
             if name not in NAME_TO_ID:
                 NAME_TO_ID[name] = coin_id
 
-async def get_prices(subscriptions: dict):
-    coins = ",".join(list(set(subscription["coin"] for subscription in subscriptions)))
-
+# Gets prices of all available coins
+async def get_prices():
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(

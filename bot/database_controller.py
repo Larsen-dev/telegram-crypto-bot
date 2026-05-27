@@ -1,9 +1,12 @@
+import yaml
 import sqlite3
 
-from logger_handler import get_logger
+# .yaml settings variables
+with open(r"bot/settings.yaml", "r") as file:
+    yaml_settings = yaml.safe_load(file)
 
-DB_NAME = "bot_subscriptions.db"
-logger = get_logger()
+DB_SETTINGS = yaml_settings["database_settings"]
+DB_NAME = DB_SETTINGS["name"]
 
 def init_db():
     with sqlite3.connect(DB_NAME) as connect:

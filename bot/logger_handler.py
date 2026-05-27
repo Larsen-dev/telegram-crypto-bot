@@ -1,14 +1,16 @@
 import logging
 
-def init_logger():
-    logger = logging.getLogger("crypto_bot")
+# Gets logger by passed name
+def init_logger(logger_name: str):
+    logger = logging.getLogger(logger_name)
     logging.basicConfig(
-        filename="telegram_crypto_bot.log",
+        filename=f"{logger_name}.log",
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s"
     )
 
     return logger
 
-def get_logger():
-    return logging.getLogger(__name__)
+# Returnes logger
+def get_logger(logger_name: str):
+    return logging.getLogger(logger_name)
