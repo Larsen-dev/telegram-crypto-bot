@@ -6,6 +6,7 @@ logger_settings:
 
 bot_settings:
   interval: 300
-  default_startup_message: "Crypto bot is active!\nUse /subscribe <coin-name> <cost> <'above' | 'below'>."
+  default_startup_message: "Crypto bot is active!"
   max_message_length: 4096
-  max_run_tries: 5
+  max_subscriptions_per_user: 5
+  cost_difference_percent: 5

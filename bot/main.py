@@ -1,15 +1,19 @@
+# Library dependecies
 import os
 import yaml
 import asyncio
 from time import sleep
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler
 from telegram.error import TimedOut
 
-from database_controller import init_db, add_subscription, get_subscriptions
+# API dependecies
+from database_controller import init_db, add_subscription, get_subscriptions, get_subscriptions_by_user_id, set_inactive
 from coins_api import get_prices, get_coins, set_coins, resolve_coin_id
 from logger_handler import init_logger
+from command_handlers.coins_list import prepare_coins_list, send_coins_list, handle_coins_list_pagination
+from command_handlers.subscriptions_list import prepare_subscriptions_list, send_subscriptions_list, handle_subscriptions_list_pagination
 
 # Environment variables load
 load_dotenv()
@@ -27,10 +31,8 @@ LOGGER_NAME = LOGGER_SETTINGS["name"]
 BOT_UPDATE_INTERVAL = BOT_SETTINGS["interval"]
 BOT_DEFAULT_START_MESSAGE = BOT_SETTINGS["default_startup_message"]
 BOT_MAX_MESSAGE_LENGTH = BOT_SETTINGS["max_message_length"]
-BOT_MAX_RUN_TRIES = BOT_SETTINGS["max_run_tries"]
-
-# Logging initialisation
-logger = init_logger(LOGGER_NAME)
+MAX_SUBSCRIPTIONS_PER_USER = BOT_SETTINGS["max_subscriptions_per_user"]
+COST_DIFFERENCE_PERCENT = BOT_SETTINGS["cost_difference_percent"]
 
 # Default start handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -84,94 +86,31 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "You've subscribed to coin's cost!"
     )
 
-# Converts list of all coins into simple list of strings as they were listed
-def prepare_coins_list(coins_list: [dict]):
-    default = "All available coins list, page: {page}:\n"
-    parts = [default + ""]
-
-    part_index = 0
-    index = 1
-    for coin in coins_list:
-        to_join = f"{index}. Coin name: {coin['name'].lower()}; Coin symbol: {coin['symbol'].lower()}\n"
-        if len(parts[part_index]) + len(to_join) > BOT_MAX_MESSAGE_LENGTH - 1:
-            # Saving one literal for page number
-            parts.append(default + "")
-            part_index += 1
-
-        parts[part_index] += to_join
-        index += 1
-
-    # message_length = len(message)
-    # pages = message_length // BOT_MESSAGE_LENGTH
-    # leftover = pages % BOT_MESSAGE_LENGTH
-
-    # parts = [] * pages
-    # for index in range(0, pages - 1):
-    #     right = index * BOT_MESSAGE_LENGTH
-    #     left = message_length - pages * BOT_MESSAGE_LENGTH != leftover and (index+1) * BOT_MESSAGE_LENGTH or right + leftover
-    #     part = message[right:left]
-
-    #     parts.append(part)
-
-    return parts
-
-# Builds coins list page
-def build_coins_list_page(parted_coins: [str], page: int):
-    max_pages = len(parted_coins)
-
-    keyboard = []
-    navigation = []
-
-    if page > 0:
-        navigation.append(
-            InlineKeyboardButton(
-                text="Previous",
-                callback_data=f"coins_{page-1}"
-            )
+async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Validation
+    args = context.args
+    if len(args) < 1:
+        await update.message.reply_text(
+            "Invalid format!\nUse /unsubscribe <subscription_id>."
         )
-    
-    if page < max_pages:
-        navigation.append(
-            InlineKeyboardButton(
-                text="Next",
-                callback_data=f"coins_{page+1}"
-            )
+        return
+
+    _subscription_id = args[0]
+
+    try:
+        subscription_id = int(_subscription_id)
+    except ValueError:
+        await update.message.reply_text(
+            f"Please, enter valid subscription id: it should be a number!"
         )
+        return
     
-    if navigation:
-        keyboard.append(navigation)
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    return parted_coins[page].format(page=page), reply_markup
-
-# Sends first page of coins list
-async def send_coins_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text, reply_markup = build_coins_list_page(
-        parted_coins=prepared_coins_list,
-        page=0
+    set_inactive(
+        subscription_id=subscription_id
     )
 
     await update.message.reply_text(
-        text=text,
-        reply_markup=reply_markup
-    )
-
-# Handles pagination of coins' list
-async def handle_coins_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    page = int(query.data.split("_")[1])
-
-    text, reply_markup = build_coins_list_page(
-        parted_coins=prepared_coins_list,
-        page=page
-    )
-
-    await query.edit_message_text(
-        text=text,
-        reply_markup=reply_markup
+        "You've unsubscribed from coin's cost!"
     )
 
 # Checks whether someone's price have reached their target
@@ -186,16 +125,26 @@ async def check_prices_job(context: ContextTypes.DEFAULT_TYPE):
 
         if current_price is None:
             continue
-        
+
+        difference = subscription["target_price"] / 100 * COST_DIFFERENCE_PERCENT
+        target_price = subscription["target_price"]
+
         is_triggered = (
-            (subscription["alert_type"] == "above" and current_price >= subscription["target_price"]) or
-            (subscription["alert_type"] == "below" and current_price <= subscription["target_price"])
+            (
+                subscription["alert_type"] == "above"
+                and current_price >= target_price + difference
+            )
+            or
+            (
+                subscription["alert_type"] == "below"
+                and current_price <= target_price - difference
+            )
         )
 
         if is_triggered:
             message = (
-                f"🚨 <b>Coin price alert!</b>\n 🚨"
-                f"🚨 Coin {subscription['coin']} have reached or {subscription['alert_type']} target cost: {current_price}! 🚨"
+                f"🚨 <b>Coin price alert!</b> 🚨\n"
+                f"🚨 Coin {subscription['coin']} have reached or {subscription['alert_type']} target cost: {current_price} USD! 🚨"
             )
 
             try:
@@ -210,9 +159,20 @@ async def check_prices_job(context: ContextTypes.DEFAULT_TYPE):
                 )
 
 async def post_init(application: Application):
-    global coins_list, prepared_coins_list
+    global logger
 
     init_db()
+
+    await application.bot.set_my_commands([
+        BotCommand("start", "Starts the bot"),
+        BotCommand("subscribe", "Subscribe to coin alerts"),
+        BotCommand("unsubscribe", "Unsubscribe to coin alerts"),
+        BotCommand("coins_list", "Show available coins"),
+        BotCommand("subscriptions_list", "Show current active subscriptions"),
+    ])
+
+    # Logging initialisation
+    logger = init_logger(LOGGER_NAME)
 
     coins_list = await get_coins()
     prepared_coins_list = prepare_coins_list(coins_list)
@@ -222,8 +182,10 @@ async def post_init(application: Application):
 async def update(context: ContextTypes.DEFAULT_TYPE):
     await check_prices_job(context)
 
-    coins_list = await set_coins()
+    coins_list = await get_coins()
     prepared_coins_list = prepare_coins_list(coins_list)
+
+    await set_coins(coins_list)
 
 # Bot's enter point
 def main():
@@ -231,26 +193,26 @@ def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("subscribe", subscribe))
-    application.add_handler(CommandHandler("list", send_coins_list))
+    application.add_handler(CommandHandler("unsubscribe", unsubscribe))
+    application.add_handler(CommandHandler("coins_list", send_coins_list))
+    application.add_handler(CommandHandler("subscriptions_list", send_subscriptions_list))
 
-    application.add_handler(CallbackQueryHandler(handle_coins_pagination, r"^coins_"))
+    application.add_handler(CallbackQueryHandler(handle_coins_list_pagination, r"^coins_"))
+    application.add_handler(CallbackQueryHandler(handle_subscriptions_list_pagination, r"^subscription_"))
 
-    application.job_queue.run_repeating(update,
+    application.job_queue.run_repeating(
+        callback=update,
         interval=BOT_UPDATE_INTERVAL,
         first=5,
     )
 
-    tries = 0
-    while not application.running and tries < BOT_MAX_RUN_TRIES:
-        try:
-            sleep(5.0)
-            application.run_polling()
-        except TimedOut as e:
-            tries += 1
-            
-            logger.exception(
-                f"Failed to run application: {e}, try number: {tries}"
-            )
+    try:
+        application.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+        )
+    except KeyboardInterrupt:
+        logger.info("Bot stopped.")
 
 if __name__ == "__main__":
     main()

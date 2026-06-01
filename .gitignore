@@ -1,5 +1,4 @@
 .env
-coins.json
 venv/
 __pycache__/
 *.pyc

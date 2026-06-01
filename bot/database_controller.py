@@ -1,12 +1,14 @@
 import yaml
 import sqlite3
+from pathlib import Path
 
 # .yaml settings variables
 with open(r"bot/settings.yaml", "r") as file:
     yaml_settings = yaml.safe_load(file)
 
 DB_SETTINGS = yaml_settings["database_settings"]
-DB_NAME = DB_SETTINGS["name"]
+BASE_DIR = Path(__file__).resolve().parent
+DB_NAME = BASE_DIR / "bot_subscriptions.db"
 
 def init_db():
     with sqlite3.connect(DB_NAME) as connect:
@@ -53,11 +55,22 @@ def get_subscriptions():
 
         return [dict(row) for row in cursor.fetchall()]
 
-def set_inactive(id: int):
+def get_subscriptions_by_user_id(user_id: int):
+    with sqlite3.connect(DB_NAME) as connect:
+        connect.row_factory = sqlite3.Row
+        
+        cursor = connect.cursor()
+        cursor.execute("""
+            SELECT * FROM subscriptions WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC
+        """, (user_id,))
+
+        return [dict(row) for row in cursor.fetchall()]
+
+def set_inactive(subscription_id: int):
     with sqlite3.connect(DB_NAME) as connect:
         cursor = connect.cursor()
         cursor.execute("""
             UPDATE subscriptions SET is_active = 0 WHERE id = ?
-        """, (id))
+        """, (subscription_id,))
         
         connect.commit()
